@@ -11,13 +11,13 @@ num-integer = "0.1.45"
 num-traits = "0.2.15"
 rand = "0.8"
 hex = "0.4"
-halo2_curves = { git = "https://github.com/privacy-scaling-explorations/halo2curves", tag = "0.3.1", package = "halo2curves" }
+halo2_curves = { git = "https://github.com/kroma-network/halo2curves", branch = "kroma-0.3.1-derive-serde", package = "halo2curves" }
 
 # parallel
 rayon = { version = "1.5.3", optional = true }
 
 # system_halo2
-halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2", tag = "v2023_02_02", optional = true }
+halo2_proofs = { git = "https://github.com/kroma-network/halo2.git", branch = "kroma-v0.3.0", optional = true }
 
 # loader_evm
 sha3 = { version = "0.10", optional = true }
