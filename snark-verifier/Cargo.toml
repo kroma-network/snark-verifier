@@ -31,7 +31,7 @@ rlp = { version = "0.5.2", default-features = false, features = [
 revm = { version = "= 2.3.1", optional = true }
 
 # loader_halo2
-halo2_wrong_ecc = { git = "https://github.com/kroma-network/halo2wrong", rev = "138f640", package = "ecc", optional = true }
+halo2_wrong_ecc = { git = "https://github.com/kroma-network/halo2wrong", rev = "9633f95", package = "ecc", optional = true }
 poseidon = { git = "https://github.com/kroma-network/poseidon", rev = "00a2fe0", optional = true }
 
 [dev-dependencies]
@@ -39,7 +39,7 @@ rand_chacha = "0.3.1"
 paste = "1.0.7"
 
 # system_halo2
-halo2_wrong_ecc = { git = "https://github.com/kroma-network/halo2wrong", rev = "138f640", package = "ecc" }
+halo2_wrong_ecc = { git = "https://github.com/kroma-network/halo2wrong", rev = "9633f95", package = "ecc" }
 
 # loader_evm
 crossterm = { version = "0.25" }
