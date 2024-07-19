@@ -1913,6 +1913,7 @@ dependencies = [
  "pprof",
  "rand",
  "rand_chacha",
+ "rand_core",
  "serde",
  "serde_json",
  "snark-verifier",

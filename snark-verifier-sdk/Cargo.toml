@@ -21,6 +21,7 @@ ff = "0.13"
 # halo2-base = { git = "https://github.com/axiom-crypto/halo2-lib.git", tag = "v0.2.2", default-features = false }
 halo2-base = { git = "https://github.com/kroma-network/halo2-lib.git", branch = "scroll-halo2-v1.1-with-tachyon" }
 snark-verifier = { path = "../snark-verifier", default-features = false }
+rand_core = { version = "0.6", default-features = false, features = ["getrandom"] }
 
 # loader_evm
 ethereum-types = { version = "0.14", default-features = false, features = ["std"], optional = true }
