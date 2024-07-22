@@ -17,18 +17,27 @@ use ark_std::end_timer;
 #[cfg(feature = "display")]
 use ark_std::start_timer;
 use halo2_base::halo2_proofs::{
+    bn254::{
+        GWCProver, ProvingKey as TachyonProvingKey, SHPlonkProver,
+        SnarkVerifierPoseidonWrite as TachyonPoseidonWrite, TachyonProver,
+    },
+    consts::TranscriptType,
     halo2curves::bn256::{Bn256, Fr, G1Affine},
-    plonk::{create_proof, keygen_pk, keygen_vk, verify_proof, Circuit, ProvingKey, VerifyingKey},
+    plonk::{
+        create_proof, keygen_pk, keygen_vk, tachyon::create_proof as tachyon_create_proof,
+        verify_proof, Circuit, ProvingKey, VerifyingKey,
+    },
     poly::{
-        commitment::{ParamsProver, Prover, Verifier},
+        commitment::{Params, ParamsProver, Prover, Verifier},
         kzg::{
             commitment::{KZGCommitmentScheme, ParamsKZG},
             msm::DualMSM,
             multiopen::{ProverGWC, ProverSHPLONK, VerifierGWC, VerifierSHPLONK},
             strategy::{AccumulatorStrategy, GuardKZG, SingleStrategy},
         },
-        VerificationStrategy,
+        LagrangeCoeff, Polynomial, VerificationStrategy,
     },
+    rng::SerializableRng,
     transcript::TranscriptReadBuffer,
     SerdeFormat,
 };
@@ -180,6 +189,172 @@ pub fn gen_proof_shplonk<C: Circuit<Fr>>(
     path: Option<(&Path, &Path)>,
 ) -> Result<Vec<u8>, halo2_base::halo2_proofs::plonk::Error> {
     gen_proof::<C, ProverSHPLONK<_>, VerifierSHPLONK<_>>(params, pk, circuit, instances, rng, path)
+}
+
+/// Generates a native proof using either SHPLONK or GWC proving method. Uses Poseidon for Fiat-Shamir.
+///
+/// Caches the instances and proof if `path = Some(instance_path, proof_path)` is specified.
+pub fn gen_proof_tachyon<'params, C, P, V>(
+    // TODO: pass Option<&'params ParamsKZG<Bn256>> but hard to get lifetimes to work with `Cow`
+    params: &'params ParamsKZG<Bn256>,
+    prover: &mut P,
+    pk: &ProvingKey<G1Affine>,
+    circuit: C,
+    instances: Vec<Vec<Fr>>,
+    fixed_values: Vec<Polynomial<Fr, LagrangeCoeff>>,
+    rng: &mut (impl Rng + SerializableRng + Send + Clone),
+    path: Option<(&Path, &Path)>,
+) -> Result<Vec<u8>, halo2_base::halo2_proofs::plonk::Error>
+where
+    C: Circuit<Fr>,
+    P: TachyonProver<KZGCommitmentScheme<Bn256>>,
+    V: Verifier<
+        'params,
+        KZGCommitmentScheme<Bn256>,
+        Guard = GuardKZG<'params, Bn256>,
+        MSMAccumulator = DualMSM<'params, Bn256>,
+    >,
+{
+    /*
+    #[cfg(debug_assertions)]
+    {
+        use halo2_proofs::poly::commitment::Params;
+        halo2_proofs::dev::MockProver::run(params.k(), &circuit, instances.clone())
+            .unwrap()
+            .assert_satisfied_par();
+    }
+    */
+
+    if let Some((instance_path, proof_path)) = path {
+        let cached_instances = read_instances(instance_path);
+        if matches!(cached_instances, Ok(tmp) if tmp == instances) && proof_path.exists() {
+            #[cfg(feature = "display")]
+            let read_time = start_timer!(|| format!("Reading proof from {proof_path:?}"));
+
+            let proof = fs::read(proof_path).unwrap();
+
+            #[cfg(feature = "display")]
+            end_timer!(read_time);
+            return Ok(proof);
+        }
+    }
+
+    let instances = instances.iter().map(Vec::as_slice).collect_vec();
+
+    #[cfg(feature = "display")]
+    let proof_time = start_timer!(|| "Create proof");
+
+    let mut tachyon_pk = {
+        let mut pk_bytes: Vec<u8> = vec![];
+        pk.write_including_cs(&mut pk_bytes).unwrap();
+        TachyonProvingKey::from(pk_bytes.as_slice())
+    };
+    let proof = {
+        let mut transcript = TachyonPoseidonWrite::init(vec![]);
+        tachyon_create_proof::<_, _, _, _, _, _>(
+            prover,
+            &mut tachyon_pk,
+            &[circuit],
+            &[&instances],
+            fixed_values,
+            rng.clone(),
+            &mut transcript,
+        )?;
+        let mut proof = transcript.finalize();
+        let proof_last = prover.get_proof();
+        proof.extend_from_slice(&proof_last);
+        proof
+    };
+
+    #[cfg(feature = "display")]
+    end_timer!(proof_time);
+
+    if let Some((instance_path, proof_path)) = path {
+        write_instances(&instances, instance_path);
+        fs::write(proof_path, &proof).unwrap();
+    }
+
+    let verification_ok = {
+        let mut transcript_read = PoseidonTranscript::<NativeLoader, &[u8]>::new(proof.as_slice());
+        VerificationStrategy::<_, V>::finalize(verify_proof::<_, V, _, _, _>(
+            params.verifier_params(),
+            pk.get_vk(),
+            AccumulatorStrategy::new(params.verifier_params()),
+            &[instances.as_slice()],
+            &mut transcript_read,
+        )?)
+    };
+    if !verification_ok {
+        return Err(halo2_base::halo2_proofs::plonk::Error::ConstraintSystemFailure);
+    }
+
+    Ok(proof)
+}
+
+/// Generates a native proof using original Plonk (GWC '19) multi-open scheme. Uses Poseidon for Fiat-Shamir.
+///
+/// Caches the instances and proof if `path = Some(instance_path, proof_path)` is specified.
+pub fn gen_proof_gwc_tachyon<C: Circuit<Fr>>(
+    params: &ParamsKZG<Bn256>,
+    pk: &ProvingKey<G1Affine>,
+    circuit: C,
+    instances: Vec<Vec<Fr>>,
+    fixed_values: Vec<Polynomial<Fr, LagrangeCoeff>>,
+    rng: &mut (impl Rng + SerializableRng + Send + Clone),
+    path: Option<(&Path, &Path)>,
+) -> Result<Vec<u8>, halo2_base::halo2_proofs::plonk::Error> {
+    let mut prover = {
+        let mut params_bytes = vec![];
+        params.write(&mut params_bytes).unwrap();
+        GWCProver::<KZGCommitmentScheme<Bn256>>::from_params(
+            TranscriptType::SnarkVerifierPoseidon as u8,
+            params.k,
+            params_bytes.as_slice(),
+        )
+    };
+    gen_proof_tachyon::<C, _, VerifierSHPLONK<_>>(
+        params,
+        &mut prover,
+        pk,
+        circuit,
+        instances,
+        fixed_values,
+        rng,
+        path,
+    )
+}
+
+/// Generates a native proof using SHPLONK multi-open scheme. Uses Poseidon for Fiat-Shamir.
+///
+/// Caches the instances and proof if `path` is specified.
+pub fn gen_proof_shplonk_tachyon<C: Circuit<Fr>>(
+    params: &ParamsKZG<Bn256>,
+    pk: &ProvingKey<G1Affine>,
+    circuit: C,
+    instances: Vec<Vec<Fr>>,
+    fixed_values: Vec<Polynomial<Fr, LagrangeCoeff>>,
+    rng: &mut (impl Rng + SerializableRng + Send + Clone),
+    path: Option<(&Path, &Path)>,
+) -> Result<Vec<u8>, halo2_base::halo2_proofs::plonk::Error> {
+    let mut prover = {
+        let mut params_bytes = vec![];
+        params.write(&mut params_bytes).unwrap();
+        SHPlonkProver::<KZGCommitmentScheme<Bn256>>::from_params(
+            TranscriptType::SnarkVerifierPoseidon as u8,
+            params.k,
+            params_bytes.as_slice(),
+        )
+    };
+    gen_proof_tachyon::<C, _, VerifierSHPLONK<_>>(
+        params,
+        &mut prover,
+        pk,
+        circuit,
+        instances,
+        fixed_values,
+        rng,
+        path,
+    )
 }
 
 /// Generates a SNARK using either SHPLONK or GWC multi-open scheme. Uses Poseidon for Fiat-Shamir.

@@ -68,8 +68,14 @@ pub use halo2_api::{
     gen_proof,
     // generate proof with poseidon and KZG-GWC
     gen_proof_gwc,
+    // generate proof with poseidon and KZG-GWC
+    gen_proof_gwc_tachyon,
     // generate proof with poseidon and KZG-BDFG
     gen_proof_shplonk,
+    // generate proof with poseidon and KZG-BDFG
+    gen_proof_shplonk_tachyon,
+    // generate proof with poseidon
+    gen_proof_tachyon,
     // generate a snark struct (proof + witnesses for aggregation circuit)
     gen_snark,
     // generate a snark struct (proof + witnesses for aggregation circuit) with KZG-GWC
