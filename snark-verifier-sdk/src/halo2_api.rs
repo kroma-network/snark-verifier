@@ -437,6 +437,125 @@ pub fn gen_snark_shplonk<ConcreteCircuit: CircuitExt<Fr>>(
     )
 }
 
+/// Generates a SNARK using either SHPLONK or GWC multi-open scheme. Uses Poseidon for Fiat-Shamir.
+///
+/// Tries to first deserialize from / later serialize the entire SNARK into `path` if specified.
+/// Serialization is done using `bincode`.
+pub fn gen_snark_tachyon<'params, ConcreteCircuit, P, V>(
+    params: &'params ParamsKZG<Bn256>,
+    prover: &mut P,
+    pk: &ProvingKey<G1Affine>,
+    circuit: ConcreteCircuit,
+    rng: &mut (impl Rng + SerializableRng + Send + Clone),
+    path: Option<impl AsRef<Path>>,
+) -> Result<Snark, halo2_base::halo2_proofs::plonk::Error>
+where
+    ConcreteCircuit: CircuitExt<Fr>,
+    P: TachyonProver<KZGCommitmentScheme<Bn256>>,
+    V: Verifier<
+        'params,
+        KZGCommitmentScheme<Bn256>,
+        Guard = GuardKZG<'params, Bn256>,
+        MSMAccumulator = DualMSM<'params, Bn256>,
+    >,
+{
+    if let Some(path) = &path {
+        if let Ok(snark) = read_snark(path) {
+            return Ok(snark);
+        }
+    }
+    let protocol = compile(
+        params,
+        pk.get_vk(),
+        Config::kzg()
+            .with_num_instance(circuit.num_instance())
+            .with_accumulator_indices(ConcreteCircuit::accumulator_indices()),
+    );
+
+    let instances = circuit.instances();
+    let proof = gen_proof_tachyon::<ConcreteCircuit, P, V>(
+        params,
+        prover,
+        pk,
+        circuit,
+        instances.clone(),
+        pk.fixed_values.clone(),
+        rng,
+        None,
+    )?;
+
+    let snark = Snark::new(protocol, instances, proof);
+    if let Some(path) = &path {
+        let f = File::create(path).unwrap();
+        #[cfg(feature = "display")]
+        let write_time = start_timer!(|| "Write SNARK");
+        bincode::serialize_into(f, &snark).unwrap();
+        #[cfg(feature = "display")]
+        end_timer!(write_time);
+    }
+    Ok(snark)
+}
+
+/// Generates a SNARK using SHPLONK multi-open scheme. Uses Poseidon for Fiat-Shamir.
+///
+/// Tries to first deserialize from / later serialize the entire SNARK into `path` if specified.
+/// Serialization is done using `bincode`.
+pub fn gen_snark_gwc_tachyon<ConcreteCircuit: CircuitExt<Fr>>(
+    params: &ParamsKZG<Bn256>,
+    pk: &ProvingKey<G1Affine>,
+    circuit: ConcreteCircuit,
+    rng: &mut (impl Rng + SerializableRng + Send + Clone),
+    path: Option<impl AsRef<Path>>,
+) -> Result<Snark, halo2_base::halo2_proofs::plonk::Error> {
+    let mut prover = {
+        let mut params_bytes = vec![];
+        params.write(&mut params_bytes).unwrap();
+        GWCProver::<KZGCommitmentScheme<Bn256>>::from_params(
+            TranscriptType::SnarkVerifierPoseidon as u8,
+            params.k,
+            params_bytes.as_slice(),
+        )
+    };
+    gen_snark_tachyon::<ConcreteCircuit, _, VerifierGWC<_>>(
+        params,
+        &mut prover,
+        pk,
+        circuit,
+        rng,
+        path,
+    )
+}
+
+/// Generates a SNARK using SHPLONK multi-open scheme. Uses Poseidon for Fiat-Shamir.
+///
+/// Tries to first deserialize from / later serialize the entire SNARK into `path` if specified.
+/// Serialization is done using `bincode`.
+pub fn gen_snark_shplonk_tachyon<ConcreteCircuit: CircuitExt<Fr>>(
+    params: &ParamsKZG<Bn256>,
+    pk: &ProvingKey<G1Affine>,
+    circuit: ConcreteCircuit,
+    rng: &mut (impl Rng + SerializableRng + Send + Clone),
+    path: Option<impl AsRef<Path>>,
+) -> Result<Snark, halo2_base::halo2_proofs::plonk::Error> {
+    let mut prover = {
+        let mut params_bytes = vec![];
+        params.write(&mut params_bytes).unwrap();
+        SHPlonkProver::<KZGCommitmentScheme<Bn256>>::from_params(
+            TranscriptType::SnarkVerifierPoseidon as u8,
+            params.k,
+            params_bytes.as_slice(),
+        )
+    };
+    gen_snark_tachyon::<ConcreteCircuit, _, VerifierSHPLONK<_>>(
+        params,
+        &mut prover,
+        pk,
+        circuit,
+        rng,
+        path,
+    )
+}
+
 /// Verifies a native proof using either SHPLONK or GWC proving method. Uses Poseidon for Fiat-Shamir.
 ///
 pub fn verify_snark<'params, ConcreteCircuit, V>(

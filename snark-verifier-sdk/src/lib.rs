@@ -80,8 +80,14 @@ pub use halo2_api::{
     gen_snark,
     // generate a snark struct (proof + witnesses for aggregation circuit) with KZG-GWC
     gen_snark_gwc,
+    // generate a snark struct (proof + witnesses for aggregation circuit) with KZG-GWC
+    gen_snark_gwc_tachyon,
     // generate a snark struct (proof + witnesses for aggregation circuit) with KZG-BDFG
     gen_snark_shplonk,
+    // generate a snark struct (proof + witnesses for aggregation circuit) with KZG-BDFG
+    gen_snark_shplonk_tachyon,
+    // generate a snark struct (proof + witnesses for aggregation circuit)
+    gen_snark_tachyon,
     // verify snark
     verify_snark,
     // verify snark KZG-GWC
